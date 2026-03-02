@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import multiprocessing
 
 
@@ -146,64 +146,53 @@ def process_rb_category(rb, col_name, year_filter, sharia_conven):
     return create_summary_table(filtered, column_rb, 'DESCRIPTION', num_cols)
 
 
-def generate_all_tables(final, RCSA, input_year, col_name):
-    """Generate semua tabel menggunakan ThreadPoolExecutor"""
-    
-    # Split RC dan RB
-    rc = final[final["RB/RC"].astype(str).str.strip().str.upper().eq("RC")].copy()
+
+def generate_all_tables(final, RCSA, input_year, col_name, max_workers=None):
+
+    if max_workers is None:
+        max_workers = max(2, multiprocessing.cpu_count() - 1)
+
+    # --- Split data ---
+    rc = final[final["RB/RC"].str.upper().eq("RC")].copy()
     rc = add_rcsa_classification(rc, RCSA)
-    
-    rb = final[final["RB/RC"].astype(str).str.strip().str.upper().eq("RB")].copy()
-    
-    # Definisi semua tasks
+
+    rb = final[final["RB/RC"].str.upper().eq("RB")].copy()
+
+    # --- Task definitions ---
     rc_tasks = [
-        (f"RCSA {input_year} Conven", "RCSA", str(input_year), "Conven"),
-        (f"NON-RCSA {input_year} Conven", "NON-RCSA", str(input_year), "Conven"),
-        (f"RCSA {input_year} Sharia", "RCSA", str(input_year), "Sharia"),
-        (f"NON-RCSA {input_year} Sharia", "NON-RCSA", str(input_year), "Sharia"),
-        (f"RCSA Other than {input_year} Conven", "RCSA", f"Other than {input_year}", "Conven"),
-        (f"NON-RCSA Other than {input_year} Conven", "NON-RCSA", f"Other than {input_year}", "Conven"),
-        (f"RCSA Other than {input_year} Sharia", "RCSA", f"Other than {input_year}", "Sharia"),
-        (f"NON-RCSA Other than {input_year} Sharia", "NON-RCSA", f"Other than {input_year}", "Sharia"),
+        (f"RCSA {input_year} Conven", process_rc_category, rc, col_name, input_year, "RCSA", str(input_year), "Conven"),
+        (f"NON-RCSA {input_year} Conven", process_rc_category, rc, col_name, input_year, "NON-RCSA", str(input_year), "Conven"),
+        (f"RCSA {input_year} Sharia", process_rc_category, rc, col_name, input_year, "RCSA", str(input_year), "Sharia"),
+        (f"NON-RCSA {input_year} Sharia", process_rc_category, rc, col_name, input_year, "NON-RCSA", str(input_year), "Sharia"),
+        (f"RCSA Other than {input_year} Conven", process_rc_category, rc, col_name, input_year, "RCSA", f"Other than {input_year}", "Conven"),
+        (f"NON-RCSA Other than {input_year} Conven", process_rc_category, rc, col_name, input_year, "NON-RCSA", f"Other than {input_year}", "Conven"),
+        (f"RCSA Other than {input_year} Sharia", process_rc_category, rc, col_name, input_year, "RCSA", f"Other than {input_year}", "Sharia"),
+        (f"NON-RCSA Other than {input_year} Sharia", process_rc_category, rc, col_name, input_year, "NON-RCSA", f"Other than {input_year}", "Sharia"),
     ]
-    
+
     rb_tasks = [
-        (f"Conven {input_year}", str(input_year), "Conven"),
-        (f"Sharia {input_year}", str(input_year), "Sharia"),
-        (f"Conven Other than {input_year}", f"Other than {input_year}", "Conven"),
-        (f"Sharia Other than {input_year}", f"Other than {input_year}", "Sharia"),
+        (f"Conven {input_year}", process_rb_category, rb, col_name, str(input_year), "Conven"),
+        (f"Sharia {input_year}", process_rb_category, rb, col_name, str(input_year), "Sharia"),
+        (f"Conven Other than {input_year}", process_rb_category, rb, col_name, f"Other than {input_year}", "Conven"),
+        (f"Sharia Other than {input_year}", process_rb_category, rb, col_name, f"Other than {input_year}", "Sharia"),
     ]
-    
+
     results = {}
-    
-    # Parallel processing untuk RC tables
-    max_workers = multiprocessing.cpu_count()
-    
+
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Process RC
-        rc_futures = {
-            executor.submit(process_rc_category, rc, col_name, input_year, rcsa, year, sc): name
-            for name, rcsa, year, sc in rc_tasks
-        }
-        
-        for future in rc_futures:
-            sheet_name = rc_futures[future]
+        futures = []
+
+        for name, func, *args in rc_tasks + rb_tasks:
+            futures.append(executor.submit(func, *args))
+            results[futures[-1]] = name
+
+        for future in as_completed(results):
+            sheet_name = results[future]
             results[sheet_name] = future.result()
-    
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Process RB
-        rb_futures = {
-            executor.submit(process_rb_category, rb, col_name, year, sc): name
-            for name, year, sc in rb_tasks
-        }
-        
-        for future in rb_futures:
-            sheet_name = rb_futures[future]
-            results[sheet_name] = future.result()
-    
-    # Tambahkan final dan rc/rb ke hasil
-    results['Data'] = final
-    results['RC'] = rc
-    results['RB'] = rb
-    
+
+    # --- Tambahkan raw data ---
+    results["Data"] = final
+    results["RC"] = rc
+    results["RB"] = rb
+
     return results

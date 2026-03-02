@@ -4,6 +4,9 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.utils.dataframe import dataframe_to_rows
 import os
 from syntax.RRA import read_data, process_final_data, generate_all_tables
+import multiprocessing
+
+MAX_WORKERS = max(2, multiprocessing.cpu_count() - 1)
 
 
 def read_input_sheet(input_path):
@@ -113,7 +116,7 @@ def main(input_path):
     final, col_name = process_final_data(data, previous, input_year)
     
     print("⚙️ Generating all summary tables (using ThreadPoolExecutor)...")
-    results = generate_all_tables(final, RCSA, input_year, col_name)
+    results = generate_all_tables(final, RCSA, input_year, col_name, max_workers=MAX_WORKERS)
     
     print("📝 Writing to Excel with formatting...")
     write_to_excel_with_format(results, file_path_output, input_path)
