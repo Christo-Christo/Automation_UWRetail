@@ -19,56 +19,76 @@ def read_input_sheet(input_path):
     return params
 
 
-def write_to_excel_with_format(results, output_path, input_year):
-    """Menulis semua DataFrame ke Excel dengan formatting"""
-    
-    output_file = os.path.join(output_path, f"RRA_Output_{input_year}.xlsx")
-    
-    # Tulis semua DataFrame ke Excel
-    with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-        for sheet_name, df in results.items():
-            df.to_excel(writer, sheet_name=sheet_name, index=False)
-    
-    # Format header dengan openpyxl
-    wb = load_workbook(output_file)
-    
-    # Style untuk header
-    header_fill = PatternFill(start_color="00B0F0", end_color="00B0F0", fill_type="solid")  # Biru terang
-    header_font = Font(bold=True, color="FFFFFF")  # Putih bold
-    
-    for sheet_name in wb.sheetnames:
-        ws = wb[sheet_name]
-        
-        # Apply formatting ke baris pertama (header)
+def write_to_excel_with_format(results, output_path, input_path):
+    from openpyxl import load_workbook
+    from openpyxl.styles import Font, PatternFill
+    import os
+
+    input_filename = os.path.basename(input_path)
+    name, ext = os.path.splitext(input_filename)
+    output_file = os.path.join(output_path, f"{name}_processed{ext}")
+
+    header_fill = PatternFill(start_color="00B0F0", end_color="00B0F0", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+
+    def format_header(ws):
         for cell in ws[1]:
             cell.fill = header_fill
             cell.font = header_font
-        
-        # Auto-fit column width (opsional)
-        for column in ws.columns:
-            max_length = 0
-            column_letter = column[0].column_letter
-            for cell in column:
-                try:
-                    if len(str(cell.value)) > max_length:
-                        max_length = len(cell.value)
-                except:
-                    pass
-            adjusted_width = min(max_length + 2, 50)
-            ws.column_dimensions[column_letter].width = adjusted_width
-    
-    # Tab colors
-    tab_colors_2025 = ["RCSA 2025 Conven", "NON-RCSA 2025 Conven", "RCSA 2025 Sharia", "NON-RCSA 2025 Sharia", "Conven 2025", "Sharia 2025"]
-    tab_colors_other = ["RCSA Other than 2025 Conven", "NON-RCSA Other than 2025 Conven", "RCSA Other than 2025 Sharia", "NON-RCSA Other than 2025 Sharia", "Conven Other than 2025", "Sharia Other than 2025"]
-    
-    for sheet_name in tab_colors_2025:
-        if sheet_name in wb.sheetnames:
-            wb[sheet_name].sheet_properties.tabColor = "C0E6F5"
-    
-    for sheet_name in tab_colors_other:
-        if sheet_name in wb.sheetnames:
-            wb[sheet_name].sheet_properties.tabColor = "DAF2D0"
-    
+
+    def format_grand_total(ws):
+        for row in ws.iter_rows(min_row=2):
+            if str(row[0].value).strip().lower() == "grand total":
+                for cell in row:
+                    cell.fill = header_fill
+                    cell.font = header_font
+
+    # --- Pisahkan sheet ---
+    data_df = results.pop("Data")
+    rc_df = results.pop("RC")
+    rb_df = results.pop("RB")
+
+    rc_sheets = {k: v for k, v in results.items() if "RCSA" in k or "NON-RCSA" in k}
+    rb_sheets = {k: v for k, v in results.items() if k not in rc_sheets}
+
+    with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
+        # 1. Data
+        data_df.to_excel(writer, sheet_name="Data", index=False)
+
+        # 2. >>>
+        pd.DataFrame().to_excel(writer, sheet_name=">>>", index=False)
+
+        # 3. RC
+        rc_df.to_excel(writer, sheet_name="RC", index=False)
+
+        # 4. RC detail
+        for name, df in rc_sheets.items():
+            df.to_excel(writer, sheet_name=name, index=False)
+
+        # 5. >>>
+        pd.DataFrame().to_excel(writer, sheet_name=">>>_RB", index=False)
+
+        # 6. RB
+        rb_df.to_excel(writer, sheet_name="RB", index=False)
+
+        # 7. RB detail
+        for name, df in rb_sheets.items():
+            df.to_excel(writer, sheet_name=name, index=False)
+
+    # --- Formatting ---
+    wb = load_workbook(output_file)
+
+    for sheet in wb.sheetnames:
+        ws = wb[sheet]
+        if ws.max_row >= 1:
+            format_header(ws)
+            format_grand_total(ws)
+
+        # Auto width
+        for col in ws.columns:
+            max_len = max(len(str(cell.value)) if cell.value else 0 for cell in col)
+            ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 50)
+
     wb.save(output_file)
     print(f"✅ Output saved: {output_file}")
 
@@ -96,6 +116,6 @@ def main(input_path):
     results = generate_all_tables(final, RCSA, input_year, col_name)
     
     print("📝 Writing to Excel with formatting...")
-    write_to_excel_with_format(results, file_path_output, input_year)
+    write_to_excel_with_format(results, file_path_output, input_path)
     
     print("✅ All done!")
