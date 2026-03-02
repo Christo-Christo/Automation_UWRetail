@@ -146,19 +146,16 @@ def process_rb_category(rb, col_name, year_filter, sharia_conven):
     return create_summary_table(filtered, column_rb, 'DESCRIPTION', num_cols)
 
 
-
 def generate_all_tables(final, RCSA, input_year, col_name, max_workers=None):
 
     if max_workers is None:
         max_workers = max(2, multiprocessing.cpu_count() - 1)
 
-    # --- Split data ---
     rc = final[final["RB/RC"].str.upper().eq("RC")].copy()
     rc = add_rcsa_classification(rc, RCSA)
 
     rb = final[final["RB/RC"].str.upper().eq("RB")].copy()
 
-    # --- Task definitions ---
     rc_tasks = [
         (f"RCSA {input_year} Conven", process_rc_category, rc, col_name, input_year, "RCSA", str(input_year), "Conven"),
         (f"NON-RCSA {input_year} Conven", process_rc_category, rc, col_name, input_year, "NON-RCSA", str(input_year), "Conven"),
@@ -178,19 +175,17 @@ def generate_all_tables(final, RCSA, input_year, col_name, max_workers=None):
     ]
 
     results = {}
+    future_to_name = {}
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = []
-
         for name, func, *args in rc_tasks + rb_tasks:
-            futures.append(executor.submit(func, *args))
-            results[futures[-1]] = name
+            future = executor.submit(func, *args)
+            future_to_name[future] = name
 
-        for future in as_completed(results):
-            sheet_name = results[future]
+        for future in as_completed(future_to_name):
+            sheet_name = future_to_name[future]
             results[sheet_name] = future.result()
 
-    # --- Tambahkan raw data ---
     results["Data"] = final
     results["RC"] = rc
     results["RB"] = rb
